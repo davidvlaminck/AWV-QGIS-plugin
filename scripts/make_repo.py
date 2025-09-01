@@ -3,19 +3,17 @@ import zipfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-# Where your built plugin ZIPs live
+# Adjusted for your repo layout
 DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
-
-# Base URL where these ZIPs will be hosted (GitHub Pages URL)
 BASE_URL = "https://davidvlaminck.github.io/AWV-QGIS-plugin"
 
 def read_metadata_from_zip(zip_path: Path) -> dict:
     """Extract metadata.txt from the plugin ZIP and parse it into a dict."""
     with zipfile.ZipFile(zip_path, "r") as zf:
-        # Find metadata.txt inside the top-level folder
-        meta_file = next((n for n in zf.namelist() if n.endswith("metadata.txt")), None)
+        # Expect metadata.txt in the top-level folder
+        meta_file = "metadata.txt" if "metadata.txt" in zf.namelist() else None
         if not meta_file:
-            raise RuntimeError(f"No metadata.txt found in {zip_path}")
+            raise RuntimeError(f"No top-level metadata.txt found in {zip_path}")
         with zf.open(meta_file) as f:
             lines = f.read().decode("utf-8").splitlines()
     meta = {}
