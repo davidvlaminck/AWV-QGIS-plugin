@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugins>
+  <pyqgis_plugin name="hello_qgis" version="1.0.0" qgis_minimum_version="3.22" qgis_maximum_version="3.99">
+    <description>Minimal plugin served from a custom repository</description>
+    <about>This plugin demonstrates custom QGIS plugin repos and updates.</about>
+    <version>1.0.0</version>
+    <author>Your Name</author>
+    <email>you@example.com</email>
+    <homepage>https://example.invalid/hello_qgis</homepage>
+    <download_url>http://localhost:8000/hello_qgis-1.0.0.zip</download_url>
+    <experimental>False</experimental>
+    <deprecated>False</deprecated>
+    <tags>demo,custom-repo</tags>
+    <tracker>https://example.invalid/hello_qgis/issues</tracker>
+    <repository>http://localhost:8000/plugins.xml</repository>
+  </pyqgis_plugin>
+</plugins>

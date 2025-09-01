@@ -1,0 +1,14 @@
+[general]
+name=Hello QGIS
+qgisMinimumVersion=3.22
+qgisMaximumVersion=3.99
+description=A minimal plugin to test a custom plugin repository.
+version=1.0.0
+author=Your Name
+email=you@example.com
+about=This is a minimal demo plugin that shows a greeting with its version.
+homepage=https://example.invalid/hello-qgis
+tracker=https://example.invalid/hello-qgis/issues
+category=Plugins
+experimental=False
+deprecated=False
