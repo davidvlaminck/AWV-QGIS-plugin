@@ -1,5 +1,6 @@
 [general]
-name=Hello QGIS
+name=hello_qgis
+title=Hello QGIS
 qgisMinimumVersion=3.22
 qgisMaximumVersion=3.99
 description=A minimal plugin to test a custom plugin repository.

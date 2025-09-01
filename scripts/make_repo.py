@@ -1,87 +1,71 @@
 #!/usr/bin/env python3
-import re
-import sys
+import zipfile
 from pathlib import Path
-from xml.sax.saxutils import escape
+import xml.etree.ElementTree as ET
 
-# Usage: python scripts/make_repo.py https://localhost:8000/
-# base_url must end with a slash; the script will put zips in repo/ and write plugins.xml
+# Where your built plugin ZIPs live
+DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 
-ROOT = Path(__file__).resolve().parents[1]
-DIST_DIR = ROOT / "dist"
-REPO_DIR = ROOT / "repo"
+# Base URL where these ZIPs will be hosted (GitHub Pages URL)
+BASE_URL = "https://davidvlaminck.github.io/AWV-QGIS-plugin"
 
-def parse_zip(zip_name: str):
-    # Expect format: <pluginName>-<version>.zip, e.g., hello_qgis-1.1.0.zip
-    m = re.match(r"^(.+)-(\d+\.\d+\.\d+)\.zip$", zip_name)
-    if not m:
-        return None, None
-    return m.group(1), m.group(2)
+def read_metadata_from_zip(zip_path: Path) -> dict:
+    """Extract metadata.txt from the plugin ZIP and parse it into a dict."""
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        # Find metadata.txt inside the top-level folder
+        meta_file = next((n for n in zf.namelist() if n.endswith("metadata.txt")), None)
+        if not meta_file:
+            raise RuntimeError(f"No metadata.txt found in {zip_path}")
+        with zf.open(meta_file) as f:
+            lines = f.read().decode("utf-8").splitlines()
+    meta = {}
+    for line in lines:
+        if "=" in line:
+            k, v = line.split("=", 1)
+            meta[k.strip()] = v.strip()
+    return meta
 
-def version_key(v: str):
-    return tuple(int(x) for x in v.split("."))
+def build_plugins_xml(plugins_info: list, xml_path: Path):
+    """Generate plugins.xml for QGIS."""
+    plugins_el = ET.Element("plugins")
+    for info in plugins_info:
+        plugin_el = ET.SubElement(
+            plugins_el,
+            "pyqgis_plugin",
+            name=info["name"],
+            version=info["version"],
+            qgis_minimum_version=info.get("qgisMinimumVersion", "3.0"),
+            qgis_maximum_version=info.get("qgisMaximumVersion", "3.99"),
+        )
+        ET.SubElement(plugin_el, "description").text = info.get("description", "")
+        ET.SubElement(plugin_el, "about").text = info.get("about", "")
+        ET.SubElement(plugin_el, "version").text = info["version"]
+        ET.SubElement(plugin_el, "author").text = info.get("author", "")
+        ET.SubElement(plugin_el, "email").text = info.get("email", "")
+        ET.SubElement(plugin_el, "homepage").text = info.get("homepage", "")
+        ET.SubElement(plugin_el, "download_url").text = f"{BASE_URL}/{info['zip_name']}"
+        ET.SubElement(plugin_el, "experimental").text = info.get("experimental", "False")
+        ET.SubElement(plugin_el, "deprecated").text = info.get("deprecated", "False")
+        ET.SubElement(plugin_el, "tags").text = info.get("tags", "")
+        ET.SubElement(plugin_el, "tracker").text = info.get("tracker", "")
+        ET.SubElement(plugin_el, "repository").text = f"{BASE_URL}/plugins.xml"
+
+    tree = ET.ElementTree(plugins_el)
+    tree.write(xml_path, encoding="utf-8", xml_declaration=True)
 
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: make_repo.py <base_url_with_trailing_slash>")
-        sys.exit(1)
-    base_url = sys.argv[1]
-    if not base_url.endswith("/"):
-        base_url += "/"
+    plugins_info = []
+    for zip_path in sorted(DIST_DIR.glob("*.zip")):
+        meta = read_metadata_from_zip(zip_path)
+        meta["zip_name"] = zip_path.name
+        plugins_info.append(meta)
 
-    REPO_DIR.mkdir(exist_ok=True)
+    if not plugins_info:
+        raise RuntimeError("No plugin ZIPs found in dist/")
 
-    zips = [p for p in DIST_DIR.glob("*.zip")]
-    latest = {}
-    for z in zips:
-        name, ver = parse_zip(z.name)
-        if not name:
-            continue
-        if name not in latest or version_key(ver) > version_key(latest[name][1]):
-            latest[name] = (z, ver)
-
-    # Copy latest zips into repo/ for hosting
-    for name, (zip_path, ver) in latest.items():
-        target = REPO_DIR / zip_path.name
-        if target.resolve() != zip_path.resolve():
-            target.write_bytes(zip_path.read_bytes())
-
-    # Write plugins.xml
-    items = []
-    for name, (zip_path, ver) in sorted(latest.items()):
-        download_url = base_url + zip_path.name
-        # Minimal metadata: adjust as needed
-        item = f"""  <pyqgis_plugin name="{escape(name)}" version="{escape(ver)}" qgis_minimum_version="3.22" qgis_maximum_version="3.99">
-    <description>Minimal plugin served from a custom repository</description>
-    <about>This plugin demonstrates custom QGIS plugin repos and updates.</about>
-    <version>{escape(ver)}</version>
-    <author>Your Name</author>
-    <email>you@example.com</email>
-    <homepage>https://example.invalid/{escape(name)}</homepage>
-    <download_url>{escape(download_url)}</download_url>
-    <experimental>False</experimental>
-    <deprecated>False</deprecated>
-    <tags>demo,custom-repo</tags>
-    <tracker>https://example.invalid/{escape(name)}/issues</tracker>
-    <repository>{escape(base_url)}plugins.xml</repository>
-  </pyqgis_plugin>"""
-        items.append(item)
-
-    xml = """<?xml version="1.0" encoding="UTF-8"?>
-<plugins>
-{items}
-</plugins>
-""".format(items="\n".join(items))
-
-    (REPO_DIR / "plugins.xml").write_text(xml, encoding="utf-8")
-    print(f"Wrote {REPO_DIR / 'plugins.xml'}")
-    print("Zips available:")
-    for z in sorted(REPO_DIR.glob("*.zip")):
-        print(" -", z.name)
+    xml_path = DIST_DIR / "plugins.xml"
+    build_plugins_xml(plugins_info, xml_path)
+    print(f"Generated {xml_path} with {len(plugins_info)} plugin(s)")
 
 if __name__ == "__main__":
     main()
-
-
-# command to run the script:
-# python3 scripts/make_repo.py https://davidvlaminck.github.io/AWV-QGIS-plugin/
