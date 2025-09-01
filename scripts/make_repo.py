@@ -11,7 +11,7 @@ def read_metadata_from_zip(zip_path: Path) -> dict:
     """Extract metadata.txt from the plugin ZIP and parse it into a dict."""
     with zipfile.ZipFile(zip_path, "r") as zf:
         # Expect metadata.txt in the top-level folder
-        meta_file = "metadata.txt" if "metadata.txt" in zf.namelist() else None
+        meta_file = next((n for n in zf.namelist() if n.count("/") == 1 and n.endswith("metadata.txt")), None)
         if not meta_file:
             raise RuntimeError(f"No top-level metadata.txt found in {zip_path}")
         with zf.open(meta_file) as f:
