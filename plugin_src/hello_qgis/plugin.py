@@ -5,7 +5,7 @@ from qgis.PyQt.QtCore import QObject
 from qgis.utils import iface
 import os
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 class HelloQGISPlugin(QObject):
     def __init__(self, iface_):

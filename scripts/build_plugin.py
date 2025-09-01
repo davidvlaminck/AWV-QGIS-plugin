@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGINS_DIR = ROOT / "plugins"
+PLUGINS_DIR = ROOT / "plugin_src"
 DIST_DIR = ROOT / "dist"
 DIST_DIR.mkdir(exist_ok=True)
 
