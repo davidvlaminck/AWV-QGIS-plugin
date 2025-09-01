@@ -1,15 +1,15 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <plugins>
-    <pyqgis_plugin name="hello_qgis" version="1.0.0">
+    <pyqgis_plugin name="hello_qgis" version="1.1.0">
         <qgis_minimum_version>3.22</qgis_minimum_version>
         <qgis_maximum_version>3.99</qgis_maximum_version>
         <description>A minimal plugin to test a custom plugin repository.</description>
         <about>This is a minimal demo plugin that shows a greeting with its version.</about>
-        <version>1.0.0</version>
+        <version>1.1.0</version>
         <author>Your Name</author>
         <email>you@example.com</email>
         <homepage>https://example.invalid/hello-qgis</homepage>
-        <download_url>https://davidvlaminck.github.io/AWV-QGIS-plugin/hello_qgis-1.0.0.zip</download_url>
+        <download_url>https://davidvlaminck.github.io/AWV-QGIS-plugin/hello_qgis-1.1.0.zip</download_url>
         <experimental>False</experimental>
         <deprecated>False</deprecated>
         <tags/>

@@ -24,17 +24,19 @@ def read_metadata_from_zip(zip_path: Path) -> dict:
     return meta
 
 def build_plugins_xml(plugins_info: list, xml_path: Path):
-    """Generate plugins.xml for QGIS."""
+    """Generate plugins.xml for QGIS with proper version tags."""
     plugins_el = ET.Element("plugins")
     for info in plugins_info:
         plugin_el = ET.SubElement(
             plugins_el,
             "pyqgis_plugin",
             name=info["name"],
-            version=info["version"],
-            qgis_minimum_version=info.get("qgisMinimumVersion", "3.0"),
-            qgis_maximum_version=info.get("qgisMaximumVersion", "3.99"),
+            version=info["version"]
         )
+        # QGIS expects these as child elements, not attributes
+        ET.SubElement(plugin_el, "qgis_minimum_version").text = info.get("qgisMinimumVersion", "3.0")
+        ET.SubElement(plugin_el, "qgis_maximum_version").text = info.get("qgisMaximumVersion", "3.99")
+
         ET.SubElement(plugin_el, "description").text = info.get("description", "")
         ET.SubElement(plugin_el, "about").text = info.get("about", "")
         ET.SubElement(plugin_el, "version").text = info["version"]
