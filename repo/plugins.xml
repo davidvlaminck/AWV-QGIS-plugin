@@ -7,11 +7,11 @@
     <author>Your Name</author>
     <email>you@example.com</email>
     <homepage>https://example.invalid/hello_qgis</homepage>
-    <download_url>http://localhost:8000/hello_qgis-1.0.0.zip</download_url>
+    <download_url>https://davidvlaminck.github.io/AWV-QGIS-plugin/hello_qgis-1.0.0.zip</download_url>
     <experimental>False</experimental>
     <deprecated>False</deprecated>
     <tags>demo,custom-repo</tags>
     <tracker>https://example.invalid/hello_qgis/issues</tracker>
-    <repository>http://localhost:8000/plugins.xml</repository>
+    <repository>https://davidvlaminck.github.io/AWV-QGIS-plugin/plugins.xml</repository>
   </pyqgis_plugin>
 </plugins>

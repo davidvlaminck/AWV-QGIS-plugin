@@ -81,3 +81,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# command to run the script:
+# python3 scripts/make_repo.py https://davidvlaminck.github.io/AWV-QGIS-plugin/
