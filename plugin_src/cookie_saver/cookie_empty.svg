@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Left half of the cookie with scalloped bite edge (no masks) -->
+  <path d="
+    M 16,3
+    A 13,13 0 0 0 3,16
+    A 13,13 0 0 0 16,29
+    Q 15,27 16.2,25
+    Q 14.8,23.5 16.1,21.8
+    Q 14.6,20.2 16.2,18.8
+    Q 14.8,17.3 16.2,15.8
+    Q 14.8,14.3 16.2,12.8
+    Q 14.8,11.3 16.2,9.8
+    Q 15.2,7.8 16,6
+    Z"
+    fill="#D8A25E" stroke="#6F4A2D" stroke-width="2" stroke-linejoin="round" />
+
+  <!-- Inner semi-ring (subtle depth), drawn as a slightly inset half with wavy edge -->
+  <path d="
+    M 16,4.5
+    A 11.5,11.5 0 0 0 4.5,16
+    A 11.5,11.5 0 0 0 16,27.5
+    Q 15.2,26.3 16.0,25.0
+    Q 15.0,23.6 16.0,22.4
+    Q 15.0,21.0 16.0,19.8
+    Q 15.0,18.4 16.0,17.2
+    Q 15.0,15.8 16.0,14.6
+    Q 15.0,13.2 16.0,12.0
+    Q 15.3,10.3 16.0,8.8
+    Z"
+    fill="none" stroke="#C2854F" stroke-width="1" stroke-linejoin="round" />
+
+  <!-- Chocolate chips on remaining half -->
+  <g fill="#4B2E1F">
+    <circle cx="11" cy="10" r="1.5"/>
+    <circle cx="14.5" cy="18.5" r="1.6"/>
+    <circle cx="9.5" cy="19.5" r="1.2"/>
+  </g>
+
+  <!-- Crumbs drifting to the right of the bite -->
+  <g fill="#D8A25E" stroke="#6F4A2D" stroke-width="0.5">
+    <circle cx="18.7" cy="9.0" r="0.9"/>
+    <circle cx="20.0" cy="12.5" r="0.8"/>
+    <circle cx="19.5" cy="16.0" r="0.7"/>
+    <circle cx="19.8" cy="19.5" r="0.65"/>
+    <circle cx="18.9" cy="22.0" r="0.6"/>
+  </g>
+</svg>
