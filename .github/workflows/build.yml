@@ -2,7 +2,8 @@ name: Build Plugins and Commit
 run-name: Build Plugins and Commit
 on:
   workflow_dispatch:  # manual trigger only
-
+permissions:
+  contents: write  # allow pushing commits
 jobs:
   build-and-commit:
     runs-on: ubuntu-latest
@@ -30,6 +31,8 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
+            # Ensure we push to the same branch we checked out
+            branch="$(git rev-parse --abbrev-ref HEAD)"
             git commit -m "Automated build: update plugins"
-            git push
+            git push origin "$branch"
           fi
