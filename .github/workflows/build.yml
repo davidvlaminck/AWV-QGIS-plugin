@@ -1,7 +1,7 @@
 name: Build Plugins and Commit
 run-name: Build Plugins and Commit
 on:
-  workflow_dispatch: 
+  workflow_dispatch:  # manual trigger only
 
 jobs:
   build-and-commit:
@@ -10,7 +10,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # needed to push back
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -18,6 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          # pip install -r requirements.txt  # if needed
       - name: Run build script
         run: python scripts/build_plugins.py
       - name: Commit and push changes
