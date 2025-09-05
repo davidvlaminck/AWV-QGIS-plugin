@@ -11,6 +11,14 @@ DIST_DIR = ROOT / "dist"
 BASE_URL = "https://davidvlaminck.github.io/AWV-QGIS-plugin"
 DIST_DIR.mkdir(exist_ok=True)
 
+# Clear out any existing files in dist/
+for item in DIST_DIR.iterdir():
+    if item.is_file() or item.is_symlink():
+        item.unlink()
+    elif item.is_dir():
+        shutil.rmtree(item)
+
+
 def read_metadata(metadata_path: Path) -> dict:
     """Read key=value pairs from metadata.txt into a dict."""
     meta = {}
