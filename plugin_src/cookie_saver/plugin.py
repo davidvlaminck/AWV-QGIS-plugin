@@ -3,7 +3,12 @@ from datetime import datetime, timedelta
 from qgis.PyQt.QtCore import QSettings, QTimer
 from qgis.PyQt.QtWidgets import QAction, QInputDialog, QLineEdit
 from qgis.PyQt.QtGui import QIcon
+from qgis.core import Qgis, QgsMessageLog
 import os
+
+from .EMInfraClient import EMInfraClient
+from .Enums import Environment
+
 
 class CookiePlugin:
     def __init__(self, iface):
@@ -42,7 +47,19 @@ class CookiePlugin:
             "Cookie:",
             QLineEdit.Normal
         )
+        # 17412b6ce6fd479d915ee8265290e198
         if ok and cookie:
+            client = EMInfraClient(cookie=cookie, env=Environment.PRD)
+            try:
+                client.test_connection()
+                QgsMessageLog.logMessage('Client authenticatie naar EM-Infra gelukt', "CustomEnv", Qgis.Info)
+            except Exception as e:
+                self.iface.messageBar().pushCritical(
+                    "Cookie Plugin",
+                    f"Failed to validate cookie: {e}"
+                )
+                return
+
             expiry_time = datetime.now() + timedelta(hours=12)
             settings = QSettings()
             settings.setValue("SharedPlugins/CookieValue", cookie)
@@ -60,14 +77,11 @@ class CookiePlugin:
         expiry_str = settings.value("SharedPlugins/CookieExpiry", "")
 
         if cookie and expiry_str:
-            try:
-                expiry_time = datetime.fromisoformat(expiry_str)
-                if datetime.now() < expiry_time:
-                    # Cookie is still valid
-                    self.update_icon(True)
-                    return
-            except Exception:
-                pass
+            expiry_time = datetime.fromisoformat(expiry_str)
+            if datetime.now() < expiry_time:
+                # Cookie is still valid
+                self.update_icon(True)
+                return
 
         # If we reach here, cookie is missing or expired
         self.clear_cookie()
