@@ -1,5 +1,21 @@
 <?xml version='1.0' encoding='utf-8'?>
 <plugins>
+    <pyqgis_plugin name="cookie_saver" version="0.1.0">
+        <qgis_minimum_version>3.22</qgis_minimum_version>
+        <qgis_maximum_version>3.99</qgis_maximum_version>
+        <description>Saves your AWV cookies for easier use in other plugins</description>
+        <about>This is a minimal demo plugin that shows a greeting with its version.</about>
+        <version>0.1.0</version>
+        <author>Your Name</author>
+        <email>you@example.com</email>
+        <homepage>https://example.invalid/hello-qgis</homepage>
+        <download_url>https://davidvlaminck.github.io/AWV-QGIS-plugin/cookie_saver-0.1.0.zip</download_url>
+        <experimental>False</experimental>
+        <deprecated>False</deprecated>
+        <tags/>
+        <tracker>https://example.invalid/hello-qgis/issues</tracker>
+        <repository>https://davidvlaminck.github.io/AWV-QGIS-plugin/plugins.xml</repository>
+    </pyqgis_plugin>
     <pyqgis_plugin name="hello_qgis" version="1.1.0">
         <qgis_minimum_version>3.22</qgis_minimum_version>
         <qgis_maximum_version>3.99</qgis_maximum_version>
