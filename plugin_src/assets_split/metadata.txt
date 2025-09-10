@@ -1,0 +1,15 @@
+[general]
+name=assets_split
+title=AWV Assets Split
+qgisMinimumVersion=3.22
+qgisMaximumVersion=3.99
+description=Adds a split function that keeps the assetId attribute only for the largest feature
+version=0.1.0
+author=David Vlaminck
+email=david.vlaminck@mow.vlaanderen.be
+about=Adds a split function that keeps the assetId attribute only for the largest feature.
+homepage=https://github.com/davidvlaminck/AWV-QGIS-plugin/
+tracker=https://github.com/davidvlaminck/AWV-QGIS-plugin/issues
+category=Plugins
+experimental=False
+deprecated=False
