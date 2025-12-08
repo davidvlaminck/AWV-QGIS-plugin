@@ -145,7 +145,7 @@ class HelloQGISPlugin(QObject):
                                 "Installed packages:\n\n" + short_text)
 
         # log full list to QGIS log and print to console
-        QgsMessageLog.logMessage(f"Installed packages for plugin {VERSION}:\n{full_text}", "HelloQGIS", Qgis.Info)
+        self.QgsMessageLog.logMessage(f"Installed packages for plugin {VERSION}:\n{full_text}", "HelloQGIS", self.Qgis.Info)
         print(f"Installed packages for plugin {VERSION}:\n{full_text}")
 
         # if very long, also write to a temp file and tell the user where it is
@@ -154,8 +154,8 @@ class HelloQGISPlugin(QObject):
                 fd, path = tempfile.mkstemp(prefix="hello_qgis_pkgs_", suffix=".txt")
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(full_text)
-                QgsMessageLog.logMessage(f"Full package list written to: {path}", "HelloQGIS", Qgis.Info)
+                self.QgsMessageLog.logMessage(f"Full package list written to: {path}", "HelloQGIS", self.Qgis.Info)
                 QMessageBox.information(self.iface.mainWindow(), "Package list saved",
                                         f"The full package list is long and was written to:\n{path}")
             except Exception as e:
-                QgsMessageLog.logMessage(f"Failed to write package list to temp file: {e}", "HelloQGIS", Qgis.Warning)
+                self.QgsMessageLog.logMessage(f"Failed to write package list to temp file: {e}", "HelloQGIS", self.Qgis.Warning)
