@@ -1,45 +1,131 @@
 # -*- coding: utf-8 -*-
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtCore import QObject
+from qgis.PyQt.QtCore import QObject, QTimer
+from qgis.core import QgsMessageLog, Qgis
 from qgis.utils import iface
 
-import sys
-import importlib
-import subprocess
-import threading
-import traceback
-
-from qgis.PyQt.QtWidgets import QMessageBox
-from qgis.PyQt.QtCore import QObject, QTimer
+import tempfile
 
 import os
+import sys
+import subprocess
+import threading
+
+import importlib
+import traceback
+from qgis.core import QgsMessageLog, Qgis
+from qgis.PyQt.QtWidgets import QMessageBox
+from qgis.PyQt.QtCore import QTimer
 
 VERSION = "1.1.1"
 
+def _log(msg, level=Qgis.Info):
+    QgsMessageLog.logMessage(msg, "HelloQGIS", level)
+    print(msg)
 
-def _is_package_available(package_import_name: str) -> bool:
-    """Return True if package can be imported in the current interpreter."""
-    try:
-        return importlib.util.find_spec(package_import_name) is not None
-    except Exception:
-        return False
+def venv_path_for_plugin(plugin_dir: str, name: str = "venv") -> str:
+    return os.path.join(plugin_dir, name)
 
-
-def _run_pip_install(package_spec: str) -> (bool, str):
+def venv_site_packages(venv_path: str) -> str:
     """
-    Run pip install using the same Python interpreter (sys.executable).
-    Returns (success, output_or_error).
+    Robustly determine site-packages inside a venv for current Python version.
     """
-    try:
-        # Use -q for quieter output; remove if you want verbose logs
-        cmd = [sys.executable, "-m", "pip", "install", package_spec]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-        out = proc.stdout.decode("utf-8", errors="replace")
-        success = proc.returncode == 0
-        return success, out
-    except Exception as e:
-        return False, f"Exception while running pip: {e}\n{traceback.format_exc()}"
+    pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    candidates = [
+        os.path.join(venv_path, "lib", pyver, "site-packages"),
+        os.path.join(venv_path, "Lib", "site-packages"),  # Windows style
+        os.path.join(venv_path, "lib", "site-packages"),
+    ]
+    for p in candidates:
+        if os.path.isdir(p):
+            _log(f"Found site-packages at: {p}")
+            return p
+
+    # fallback: try running the venv python to print site-packages
+    venv_py = os.path.join(venv_path, "bin", "python")
+    _log(f"Trying to get site-packages by running venv python at: {venv_py}")
+    if os.path.isfile(venv_py):
+        try:
+            rc = subprocess.run([venv_py, "-c", "import site, sys; print('\\n'.join(site.getsitepackages()))"],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+            out = rc.stdout.decode("utf-8", errors="replace").strip().splitlines()
+            if out:
+                # return first existing
+                for p in out:
+                    if os.path.isdir(p):
+                        return p
+        except Exception:
+            pass
+    return None
+
+def ensure_venv_and_update(plugin_dir: str, packages: list, venv_name: str = "venv", upgrade: bool = True):
+    """
+    Ensure a venv exists at plugin_dir/venv_name and install/upgrade packages.
+    Runs in background thread because pip can block.
+    """
+    venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
+    _log(f'venv_dir: {venv_dir}')
+    def _worker():
+        tag = "HelloQGIS"
+        venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
+        _log(f'venv_dir: {venv_dir}')
+        try:
+            _log(f"ensure_venv_and_update: venv_dir={venv_dir}")
+            # create venv if missing
+            if not os.path.isdir(venv_dir):
+                _log("Creating venv...")
+                rc = subprocess.run([sys.executable, "-m", "venv", venv_dir], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                if rc.returncode != 0:
+                    raise RuntimeError("Failed to create venv:\n" + rc.stdout.decode("utf-8", errors="replace"))
+            venv_py = os.path.join(venv_dir, "bin", "python")
+            if not os.path.isfile(venv_py):
+                raise RuntimeError("venv python not found at " + venv_py)
+
+            # upgrade pip
+            _log("Upgrading pip in venv...")
+            subprocess.run([venv_py, "-m", "pip", "install", "uv"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+            # install or upgrade packages
+            for pkg in packages:
+                cmd = [venv_py, "-m", "uv", "pip", "install", "--upgrade", pkg] if upgrade else [venv_py, "-m", "pip", "install", pkg]
+                _log("Running: " + " ".join(cmd))
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                out = proc.stdout.decode("utf-8", errors="replace")
+                _log(f"pip output for {pkg}:\n{out}")
+                if proc.returncode != 0:
+                    raise RuntimeError(f"pip install failed for {pkg}:\n{out}")
+
+            # success: notify main thread
+            def _ok():
+                QMessageBox.information(None, "Venv ready", f"Venv updated at:\n{venv_dir}\nPackages: {', '.join(packages)}\nYou may need to restart QGIS for some packages.")
+            QTimer.singleShot(0, _ok)
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            _log("Venv update failed:\n" + tb, level=Qgis.Critical)
+            def _err():
+                QMessageBox.critical(None, "Venv update failed", f"{e}\n\nZie Log Messages (HelloQGIS) voor details.")
+            QTimer.singleShot(0, _err)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+def add_venv_to_syspath(plugin_dir: str, venv_name: str = "venv"):
+    """
+    Add the venv site-packages to sys.path at runtime so imports work.
+    Call this early in plugin init (before imports of venv packages).
+    """
+    venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
+    _log(f'venv_dir: {venv_dir}')
+    sp = venv_site_packages(venv_dir)
+    if sp and sp not in sys.path:
+        sys.path.insert(0, sp)
+        importlib.invalidate_caches()
+        _log(f"Inserted venv site-packages into sys.path: {sp}")
+    else:
+        _log(f"No venv site-packages found at {venv_dir} (site-packages={sp})", level=Qgis.Warning)
+
 
 
 class HelloQGISPlugin(QObject):
@@ -49,9 +135,8 @@ class HelloQGISPlugin(QObject):
         self.action = None
 
     def initGui(self):
-        # single connection to a single handler
         self.action = QAction(QIcon(), f"Hello QGIS ({VERSION})", self.iface.mainWindow())
-        self.action.triggered.connect(self.on_action_triggered)
+        self.action.triggered.connect(self.run)
         self.iface.addPluginToMenu("&Hello QGIS", self.action)
         self.iface.addToolBarIcon(self.action)
 
@@ -67,95 +152,22 @@ class HelloQGISPlugin(QObject):
                 pass
             self.action = None
 
-    def on_action_triggered(self):
-        """
-        Called when the toolbar/menu action is clicked.
-        Ensure dependency first, then run the plugin action.
-        """
-        # If package already available, proceed immediately
-        if _is_package_available("otlmow_model"):
-            self.run()
-            return
-
-        # Ask user for consent on the main thread
-        reply = QMessageBox.question(
-            self.iface.mainWindow(),
-            "Install dependency",
-            "The plugin requires the Python package 'otlmow_model'.\n"
-            "Do you want to install it now into the QGIS Python environment?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
-        if reply != QMessageBox.Yes:
-            self.iface.messageBar().pushMessage("Dependency", "Installation cancelled by user.", level=1, duration=5)
-            return
-
-        # Start background install; UI updates scheduled back on main thread
-        def _install_thread():
-            success, output = _run_pip_install("otlmow-model")
-            # schedule UI handling on main thread
-            def _after_install():
-                if success and _is_package_available("otlmow_model"):
-                    self.iface.messageBar().pushMessage("Dependency", "Installed 'otlmow_model' successfully.", level=0, duration=5)
-                    QMessageBox.information(self.iface.mainWindow(), "Installation complete",
-                                            "'otlmow_model' was installed successfully.\nYou may need to restart QGIS or reload the plugin.")
-                    # now run the plugin action
-                    self.run()
-                elif success and not _is_package_available("otlmow_model"):
-                    self.iface.messageBar().pushMessage("Dependency", "Installed but import failed.", level=2, duration=8)
-                    QMessageBox.warning(self.iface.mainWindow(), "Install completed but import failed",
-                                        "pip reported success but the module could not be imported.\n\nOutput:\n" + output[:1000])
-                else:
-                    self.iface.messageBar().pushMessage("Dependency", "Failed to install 'otlmow_model'.", level=2, duration=8)
-                    QMessageBox.critical(self.iface.mainWindow(), "Installation failed",
-                                         "Could not install 'otlmow-model'.\n\nOutput:\n" + output[:2000])
-
-            QTimer.singleShot(0, _after_install)
-
-        t = threading.Thread(target=_install_thread, daemon=True)
-        t.start()
-
-    from qgis.core import QgsMessageLog, Qgis
-    import tempfile
-    import os
-    from qgis.PyQt.QtWidgets import QMessageBox
-
     def run(self):
-        # collect installed packages
+        QMessageBox.information(self.iface.mainWindow(), "Hello QGIS",
+                                f"Hello from version {VERSION}!")
+
+        # same package listing behavior as before
+        plugin_dir = os.path.dirname(__file__)
+        ensure_venv_and_update(plugin_dir, ["otlmow-model"])
+
+        add_venv_to_syspath(plugin_dir, venv_name="venv")
         try:
-            import subprocess
-            proc = subprocess.run([sys.executable, "-m", "pip", "list", "--format=freeze"],
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-            full_text = proc.stdout.decode("utf-8", errors="replace")
-            pkgs = full_text.splitlines()
-        except Exception as e:
-            pkgs = [f"Error enumerating packages: {e}"]
-
-        # prepare short and full outputs
-        full_text = "\n".join(pkgs)
-        short_text = full_text
-        # truncate for message box if too long
-        max_chars = 1000
-        if len(short_text) > max_chars:
-            short_text = short_text[:max_chars].rsplit("\n", 1)[0] + "\n…(truncated)"
-
-        # show in message bar and message box
-        self.iface.messageBar().pushMessage("Hello QGIS", f"Hello from version {VERSION}!", level=0, duration=5)
-        QMessageBox.information(self.iface.mainWindow(), f"Hello QGIS ({VERSION})",
-                                "Installed packages:\n\n" + short_text)
-
-        # log full list to QGIS log and print to console
-        self.QgsMessageLog.logMessage(f"Installed packages for plugin {VERSION}:\n{full_text}", "HelloQGIS", self.Qgis.Info)
-        print(f"Installed packages for plugin {VERSION}:\n{full_text}")
-
-        # if very long, also write to a temp file and tell the user where it is
-        if len(full_text) > 5000:
-            try:
-                fd, path = tempfile.mkstemp(prefix="hello_qgis_pkgs_", suffix=".txt")
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(full_text)
-                self.QgsMessageLog.logMessage(f"Full package list written to: {path}", "HelloQGIS", self.Qgis.Info)
-                QMessageBox.information(self.iface.mainWindow(), "Package list saved",
-                                        f"The full package list is long and was written to:\n{path}")
-            except Exception as e:
-                self.QgsMessageLog.logMessage(f"Failed to write package list to temp file: {e}", "HelloQGIS", self.Qgis.Warning)
+            import otlmow_model
+            _log("otlmow_model imported, testing usage...", Qgis.Info)
+            from otlmow_model.OtlMowModel.Classes.Onderdeel.Camera import Camera
+            camera = Camera()
+            camera.toestand = 'in-gebruik'
+            _log("otlmow_model import succeeded", Qgis.Info)
+        except Exception:
+            QgsMessageLog.logMessage("otlmow_model import failed after adding venv:\n" + traceback.format_exc(),
+                                     "HelloQGIS", Qgis.Warning)
