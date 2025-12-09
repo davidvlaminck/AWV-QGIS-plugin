@@ -1,133 +1,197 @@
 # -*- coding: utf-8 -*-
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+import importlib
+import subprocess
+import sys
+import traceback
+from pathlib import Path
+
+from qgis.PyQt.QtCore import QObject, QTimer, QProcess
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtCore import QObject, QTimer
+from qgis.PyQt.QtWidgets import QAction, QMessageBox, QProgressBar
 from qgis.core import QgsMessageLog, Qgis
 from qgis.utils import iface
 
-import tempfile
-
-import os
-import sys
-import subprocess
-import threading
-
-import importlib
-import traceback
-from qgis.core import QgsMessageLog, Qgis
-from qgis.PyQt.QtWidgets import QMessageBox
-from qgis.PyQt.QtCore import QTimer
-
 VERSION = "1.1.1"
 
+
+# -------------------------
+# Logging helper
+# -------------------------
 def _log(msg, level=Qgis.Info):
-    QgsMessageLog.logMessage(msg, "HelloQGIS", level)
-    print(msg)
+    """Log only warnings/errors to QGIS Log Messages and print to console."""
+    try:
+        QgsMessageLog.logMessage(msg, "HelloQGIS", level)
+    except Exception:
+        pass
+    try:
+        print(msg)
+    except Exception:
+        pass
 
-def venv_path_for_plugin(plugin_dir: str, name: str = "venv") -> str:
-    return os.path.join(plugin_dir, name)
 
-def venv_site_packages(venv_path: str) -> str:
-    """
-    Robustly determine site-packages inside a venv for current Python version.
-    """
+# -------------------------
+# venv helpers
+# -------------------------
+def venv_path_for_plugin(plugin_dir: str | Path, name: str = "venv") -> Path:
+    return Path(plugin_dir) / name
+
+
+def venv_python_executable(venv_dir: Path) -> Path:
+    if sys.platform == "win32":
+        return venv_dir / "Scripts" / "python.exe"
+    else:
+        return venv_dir / "bin" / "python"
+
+
+def venv_site_packages(venv_path: str | Path) -> str | None:
+    venv_path = Path(venv_path)
     pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
     candidates = [
-        os.path.join(venv_path, "lib", pyver, "site-packages"),
-        os.path.join(venv_path, "Lib", "site-packages"),  # Windows style
-        os.path.join(venv_path, "lib", "site-packages"),
+        venv_path / "lib" / pyver / "site-packages",
+        venv_path / "Lib" / "site-packages",
+        venv_path / "lib" / "site-packages",
     ]
     for p in candidates:
-        if os.path.isdir(p):
-            _log(f"Found site-packages at: {p}")
-            return p
-
-    # fallback: try running the venv python to print site-packages
-    venv_py = os.path.join(venv_path, "bin", "python")
-    _log(f"Trying to get site-packages by running venv python at: {venv_py}")
-    if os.path.isfile(venv_py):
+        if p.is_dir():
+            return str(p)
+    venv_py = venv_path / "bin" / "python"
+    if venv_py.is_file():
         try:
-            rc = subprocess.run([venv_py, "-c", "import site, sys; print('\\n'.join(site.getsitepackages()))"],
+            rc = subprocess.run([str(venv_py), "-c", "import site; print('\\n'.join(site.getsitepackages()))"],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
             out = rc.stdout.decode("utf-8", errors="replace").strip().splitlines()
-            if out:
-                # return first existing
-                for p in out:
-                    if os.path.isdir(p):
-                        return p
+            for p in out:
+                p_path = Path(p)
+                if p_path.is_dir():
+                    return str(p_path)
         except Exception:
-            pass
+            _log("Exception while running venv python for site-packages:\n" + traceback.format_exc(), Qgis.Warning)
+    _log("No site-packages found in venv", Qgis.Warning)
     return None
 
-def ensure_venv_and_update(plugin_dir: str, packages: list, venv_name: str = "venv", upgrade: bool = True):
+
+# -------------------------
+# ensure venv and update (with uv fallback) - instrumented
+# -------------------------
+class VenvMaintainer(QObject):
+    def __init__(self, plugin_dir, packages, venv_name="venv", on_done=None):
+        super().__init__()
+        self.plugin_dir = plugin_dir
+        self.packages = packages
+        self.venv_name = venv_name
+        self.on_done = on_done
+        self.venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
+        self.venv_py = venv_python_executable(self.venv_dir)
+        self.step = 0
+        self.output = ""
+        self.message_bar_id = None
+        self.commands = self.build_commands()
+
+        # set up process
+        self.process = QProcess()
+        self.process.readyReadStandardOutput.connect(self.handle_stdout)
+        self.process.readyReadStandardError.connect(self.handle_stderr)
+        self.process.finished.connect(self.handle_finished)
+
+        # set up progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(len(self.commands))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("Venv update: %p%")
+
+        self.start()
+
+    def start(self):
+        self._show_progress("Venv update started...")
+        self.run_next_command()
+
+    def _show_progress(self, msg):
+        self.progress_bar.setFormat(f"{msg} (%p%)")
+        if iface and hasattr(iface, "messageBar"):
+            if self.message_bar_id is not None:
+                iface.messageBar().popWidget(self.message_bar_id)
+            self.message_bar_id = iface.messageBar().pushWidget(self.progress_bar, Qgis.Info)
+
+    def _update_progress(self, msg=None):
+        self.progress_bar.setValue(self.progress_bar.value() + 1)
+        if msg:
+            self.progress_bar.setFormat(f"{msg} (%p%)")
+
+    def _finish_progress(self):
+        if iface and hasattr(iface, "messageBar"):
+            self.progress_bar.setValue(self.progress_bar.maximum())
+            self.progress_bar.setFormat("Venv update completed!")
+            QTimer.singleShot(2000, lambda: iface.messageBar().popWidget(self.message_bar_id))
+
+    def _fail_progress(self, msg):
+        if iface and hasattr(iface, "messageBar"):
+            self.progress_bar.setFormat(f"Venv update failed: {msg}")
+            QTimer.singleShot(5000, lambda: iface.messageBar().popWidget(self.message_bar_id))
+
+    def build_commands(self):
+        cmds = []
+        if not Path(self.venv_dir).is_dir():
+            cmds.append([sys.executable, "-m", "venv", str(self.venv_dir)])
+        cmds.extend(
+            (
+                [str(self.venv_py), "-m", "pip", "install", "--upgrade", "pip"],
+                [str(self.venv_py), "-m", "pip", "install", "uv"],
+            )
+        )
+        cmds.extend([str(self.venv_py), "-m", "uv", "pip", "install", "--upgrade", pkg] for pkg in self.packages)
+        return cmds
+
+    def run_next_command(self):
+        if self.step >= len(self.commands):
+            self._finish_progress()
+            if self.on_done:
+                self.on_done(True, self.venv_dir, self.output)
+            _log(f"Venv updated at:\n{self.venv_dir}\nPackages: {', '.join(self.packages)}", Qgis.Info)
+            return
+        cmd = self.commands[self.step]
+        self.step += 1
+        self._update_progress()
+        self.output += f"\n\nRunning: {' '.join(cmd)}\n"
+        self.process.start(cmd[0], cmd[1:])
+
+    def handle_stdout(self):
+        out = self.process.readAllStandardOutput().data().decode()
+        self.output += out
+
+    def handle_stderr(self):
+        err = self.process.readAllStandardError().data().decode()
+        self.output += err
+        if err:
+            _log(err, Qgis.Info)
+
+    def handle_finished(self, exitCode, _):
+        if exitCode != 0:
+            self._fail_progress(f"Command failed with exit code {exitCode}")
+            if self.on_done:
+                self.on_done(False, self.venv_dir, self.output)
+            QMessageBox.critical(None, "Venv update failed",
+                                 f"Command failed with exit code {exitCode}.\nSee log for details.")
+            return
+        self.run_next_command()
+
+
+def maintain_venv_and_packages(plugin_dir: Path, packages: list, venv_name: str = "venv", upgrade: bool = True,
+                               on_done=None, timeout_per_cmd=900, plugin_instance=None):
     """
-    Ensure a venv exists at plugin_dir/venv_name and install/upgrade packages.
-    Runs in background thread because pip can block.
+    Create or update a venv in <plugin_dir>/<venv_name> and install/upgrade specified packages.
+    Uses QProcess-based async version.
+    Keeps reference to process object.
     """
-    venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
-    _log(f'venv_dir: {venv_dir}')
-    def _worker():
-        tag = "HelloQGIS"
-        venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
-        _log(f'venv_dir: {venv_dir}')
-        try:
-            _log(f"ensure_venv_and_update: venv_dir={venv_dir}")
-            # create venv if missing
-            if not os.path.isdir(venv_dir):
-                _log("Creating venv...")
-                rc = subprocess.run([sys.executable, "-m", "venv", venv_dir], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                if rc.returncode != 0:
-                    raise RuntimeError("Failed to create venv:\n" + rc.stdout.decode("utf-8", errors="replace"))
-            venv_py = os.path.join(venv_dir, "bin", "python")
-            if not os.path.isfile(venv_py):
-                raise RuntimeError("venv python not found at " + venv_py)
+    process = VenvMaintainer(plugin_dir, packages, venv_name, on_done)
+    if plugin_instance is not None:
+        plugin_instance._venv_update_process = process
+    return process
 
-            # upgrade pip
-            _log("Upgrading pip in venv...")
-            subprocess.run([venv_py, "-m", "pip", "install", "uv"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-            # install or upgrade packages
-            for pkg in packages:
-                cmd = [venv_py, "-m", "uv", "pip", "install", "--upgrade", pkg] if upgrade else [venv_py, "-m", "pip", "install", pkg]
-                _log("Running: " + " ".join(cmd))
-                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                out = proc.stdout.decode("utf-8", errors="replace")
-                _log(f"pip output for {pkg}:\n{out}")
-                if proc.returncode != 0:
-                    raise RuntimeError(f"pip install failed for {pkg}:\n{out}")
-
-            # success: notify main thread
-            def _ok():
-                QMessageBox.information(None, "Venv ready", f"Venv updated at:\n{venv_dir}\nPackages: {', '.join(packages)}\nYou may need to restart QGIS for some packages.")
-            QTimer.singleShot(0, _ok)
-
-        except Exception as e:
-            tb = traceback.format_exc()
-            _log("Venv update failed:\n" + tb, level=Qgis.Critical)
-            def _err():
-                QMessageBox.critical(None, "Venv update failed", f"{e}\n\nZie Log Messages (HelloQGIS) voor details.")
-            QTimer.singleShot(0, _err)
-
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-
-def add_venv_to_syspath(plugin_dir: str, venv_name: str = "venv"):
-    """
-    Add the venv site-packages to sys.path at runtime so imports work.
-    Call this early in plugin init (before imports of venv packages).
-    """
-    venv_dir = venv_path_for_plugin(plugin_dir, venv_name)
-    _log(f'venv_dir: {venv_dir}')
-    sp = venv_site_packages(venv_dir)
-    if sp and sp not in sys.path:
-        sys.path.insert(0, sp)
-        importlib.invalidate_caches()
-        _log(f"Inserted venv site-packages into sys.path: {sp}")
-    else:
-        _log(f"No venv site-packages found at {venv_dir} (site-packages={sp})", level=Qgis.Warning)
-
-
-
+# -------------------------
+# Plugin class
+# -------------------------
 class HelloQGISPlugin(QObject):
     def __init__(self, iface_):
         super().__init__()
@@ -136,11 +200,19 @@ class HelloQGISPlugin(QObject):
 
     def initGui(self):
         self.action = QAction(QIcon(), f"Hello QGIS ({VERSION})", self.iface.mainWindow())
-        self.action.triggered.connect(self.run)
+        self.action.triggered.connect(self.on_action_triggered)
         self.iface.addPluginToMenu("&Hello QGIS", self.action)
         self.iface.addToolBarIcon(self.action)
 
+        self.on_action_triggered()
+
     def unload(self):
+        if hasattr(self, "_venv_update_process"):
+            try:
+                self._venv_update_process.process.kill()
+            except Exception:
+                pass
+            self._venv_update_process = None
         if self.action:
             try:
                 self.iface.removePluginMenu("&Hello QGIS", self.action)
@@ -152,22 +224,11 @@ class HelloQGISPlugin(QObject):
                 pass
             self.action = None
 
-    def run(self):
-        QMessageBox.information(self.iface.mainWindow(), "Hello QGIS",
-                                f"Hello from version {VERSION}!")
-
-        # same package listing behavior as before
-        plugin_dir = os.path.dirname(__file__)
-        ensure_venv_and_update(plugin_dir, ["otlmow-model"])
-
-        add_venv_to_syspath(plugin_dir, venv_name="venv")
-        try:
-            import otlmow_model
-            _log("otlmow_model imported, testing usage...", Qgis.Info)
-            from otlmow_model.OtlMowModel.Classes.Onderdeel.Camera import Camera
-            camera = Camera()
-            camera.toestand = 'in-gebruik'
-            _log("otlmow_model import succeeded", Qgis.Info)
-        except Exception:
-            QgsMessageLog.logMessage("otlmow_model import failed after adding venv:\n" + traceback.format_exc(),
-                                     "HelloQGIS", Qgis.Warning)
+    def on_action_triggered(self):
+        plugin_dir = Path(__file__).parent
+        packages_to_maintain = ["otlmow-model", "otlmow-converter"]
+        self.iface.messageBar().pushMessage("Dependency",
+                                            "Venv update started; see Log Messages (HelloQGIS) for progress.",
+                                            level=0, duration=5)
+        maintain_venv_and_packages(plugin_dir=plugin_dir, packages=packages_to_maintain, venv_name="venv",
+                                   on_done=None, plugin_instance=self)
