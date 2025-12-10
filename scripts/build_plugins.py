@@ -34,6 +34,8 @@ def zip_plugin(plugin_dir: Path, plugin_name: str, zip_path: Path):
     Create a ZIP containing a single top-level folder named `plugin_name`
     with all files from plugin_dir inside it.
     """
+    if zip_path.exists():
+        zip_path.unlink()
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_plugin_dir = Path(tmpdir) / plugin_name
         shutil.copytree(plugin_dir, tmp_plugin_dir)
