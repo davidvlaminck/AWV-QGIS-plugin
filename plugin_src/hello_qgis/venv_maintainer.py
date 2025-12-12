@@ -122,10 +122,34 @@ class VenvMaintainer(QObject):
             self.progress_bar.setFormat(f"Venv update failed: {msg}")
             QTimer.singleShot(5000, lambda: iface.messageBar().popWidget(self.message_bar_id))
 
+    def _get_python_executable(self) -> str:
+        """
+        Returns the path to the Python executable to use for venv creation.
+        On Windows, tries to find python.exe near the QGIS executable.
+        On other platforms, returns sys.executable.
+        """
+        import sys
+        from pathlib import Path
+        if sys.platform == "win32":
+            exe = Path(sys.executable)
+            candidates = [
+                exe.parent / "python.exe",
+                exe.parent.parent / "bin" / "python.exe",
+                exe.parent.parent / "python.exe",
+            ]
+            for candidate in candidates:
+                if candidate.is_file():
+                    return str(candidate)
+            # Fallback to sys.executable (may fail)
+            return str(sys.executable)
+        else:
+            return sys.executable
+
     def build_commands(self):
         cmds = []
+        python_exe = self._get_python_executable()
         if not Path(self.venv_dir).is_dir():
-            cmds.append([sys.executable, "-m", "venv", str(self.venv_dir)])
+            cmds.append([python_exe, "-m", "venv", str(self.venv_dir)])
         cmds.extend(
             (
                 [str(self.venv_py), "-m", "pip", "install", "--upgrade", "pip"],
