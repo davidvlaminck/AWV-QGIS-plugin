@@ -1,8 +1,9 @@
 import subprocess
 import sys
 import traceback
+import urllib
 from pathlib import Path
-from qgis.PyQt.QtCore import QObject, QTimer, QProcess
+from qgis.PyQt.QtCore import QObject, QTimer, QProcess, QProcessEnvironment
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox, QProgressBar
 from qgis.core import QgsMessageLog, Qgis
@@ -120,43 +121,90 @@ class VenvMaintainer(QObject):
     def _fail_progress(self, msg):
         if iface and hasattr(iface, "messageBar"):
             self.progress_bar.setFormat(f"Venv update failed: {msg}")
-            QTimer.singleShot(5000, lambda: iface.messageBar().popWidget(self.message_bar_id))
+            # Laat de voortgangsbalk langer staan zodat de gebruiker het ziet
+            QTimer.singleShot(10000, lambda: iface.messageBar().popWidget(self.message_bar_id))
+        _log(f"Venv update failed: {msg}", Qgis.Critical)
+
+    def ensure_pip_in_venv(self, venv_py: Path):
+        """
+        Ensures pip is installed in the given venv by running get-pip.py if needed.
+        """
+        import urllib.request
+        _log(f"ensure_pip_in_venv called", Qgis.Info)
+        pip_path = venv_py.parent / "pip.exe" if sys.platform == "win32" else venv_py.parent / "pip"
+        if pip_path.is_file():
+            return  # pip already present
+
+        # Download get-pip.py
+        get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
+        get_pip_path = venv_py.parent / "get-pip.py"
+        try:
+            urllib.request.urlretrieve(get_pip_url, str(get_pip_path))
+        except Exception as e:
+            _log(f"Failed to download get-pip.py: {e}", Qgis.Critical)
+            return
+
+        # Run get-pip.py
+        try:
+            subprocess.check_call([str(venv_py), str(get_pip_path)])
+        except Exception as e:
+            # Check if pip is now present despite the error
+            if pip_path.is_file():
+                _log(f"get-pip.py returned error but pip is now present: {e}", Qgis.Warning)
+            else:
+                _log(f"Failed to run get-pip.py and pip is still missing: {e}", Qgis.Critical)
+                QMessageBox.critical(None, "Venv update failed",
+                                     f"get-pip.py failed and pip is still missing.\n\nDetails:\n{e}")
+        finally:
+            try:
+                get_pip_path.unlink()
+            except Exception:
+                pass
 
     def _get_python_executable(self) -> str:
         """
         Returns the path to the Python executable to use for venv creation.
-        On Windows, tries to find python.exe near the QGIS executable.
+        On Windows, expects the user to have a recent Python (3.12+) installed outside of QGIS (user install).
         On other platforms, returns sys.executable.
         """
+        _log("_get_python_executable", Qgis.Info)
         import sys
+        import shutil
         from pathlib import Path
+
         if sys.platform == "win32":
-            exe = Path(sys.executable)
+            # Zoek naar een echte Python in PATH (geen QGIS, geen embeddable)
+            python_exe = shutil.which("python.exe")
+            if python_exe and "QGIS" not in python_exe and "python_embed" not in python_exe:
+                return python_exe
+            # Fallback: bekende locaties
             candidates = [
-                exe.parent / "python.exe",
-                exe.parent.parent / "bin" / "python.exe",
-                exe.parent.parent / "python.exe",
+                Path.home() / "AppData/Local/Programs/Python/Python312/python.exe",
+                Path("C:/Python312/python.exe"),
+                Path("C:/Program Files/Python312/python.exe"),
             ]
             for candidate in candidates:
                 if candidate.is_file():
                     return str(candidate)
-            # Fallback to sys.executable (may fail)
-            return str(sys.executable)
+            raise RuntimeError(
+                "No suitable Python installation found. Please install Python 3.12 from https://python.org (user install, no admin needed)."
+            )
         else:
             return sys.executable
 
     def build_commands(self):
+        """
+        On Windows, use a user-installed Python (not QGIS, not embeddable) to create a venv and install all packages with pip/uv.
+        On Linux/macOS, use a venv as before.
+        """
         cmds = []
         python_exe = self._get_python_executable()
         if not Path(self.venv_dir).is_dir():
             cmds.append([python_exe, "-m", "venv", str(self.venv_dir)])
-        cmds.extend(
-            (
-                [str(self.venv_py), "-m", "pip", "install", "--upgrade", "pip"],
-                [str(self.venv_py), "-m", "pip", "install", "uv"],
-            )
-        )
-        cmds.extend([str(self.venv_py), "-m", "uv", "pip", "install", "--upgrade", pkg] for pkg in self.packages)
+        venv_py = venv_python_executable(self.venv_dir)
+        cmds.append([str(venv_py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
+        cmds.append([str(venv_py), "-m", "pip", "install", "uv"])
+        cmds.extend([str(venv_py), "-m", "uv", "pip", "install", "--upgrade", pkg] for pkg in self.packages)
         return cmds
 
     def run_next_command(self):
@@ -171,7 +219,6 @@ class VenvMaintainer(QObject):
         self._update_progress()
         self.output += f"\n\nRunning: {' '.join(cmd)}\n"
         self.process.start(cmd[0], cmd[1:])
-
     def handle_stdout(self):
         out = self.process.readAllStandardOutput().data().decode()
         self.output += out
@@ -183,12 +230,24 @@ class VenvMaintainer(QObject):
             _log(err, Qgis.Info)
 
     def handle_finished(self, exitCode, _):
+        just_ran = self.commands[self.step - 1] if self.step > 0 else []
+        is_venv_creation = (
+                len(just_ran) >= 3 and
+                just_ran[1:3] == ["-m", "venv"]
+        )
+        if is_venv_creation:
+            pip_path = self.venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / (
+                "pip.exe" if sys.platform == "win32" else "pip")
+            if not pip_path.is_file():
+                self.ensure_pip_in_venv(self.venv_py)
         if exitCode != 0:
-            self._fail_progress(f"Command failed with exit code {exitCode}")
+            # Toon de laatste 20 regels van de output in de messagebar
+            last_lines = "\n".join(self.output.strip().splitlines()[-20:])
+            self._fail_progress(f"Command failed with exit code {exitCode}. Laatste output:\n{last_lines}")
             if self.on_done:
                 self.on_done(False, self.venv_dir, self.output)
             QMessageBox.critical(None, "Venv update failed",
-                                 f"Command failed with exit code {exitCode}.\nSee log for details.")
+                                 f"Command failed with exit code {exitCode}.\nZie log voor details.\n\nLaatste output:\n{last_lines}")
             return
         self.run_next_command()
 
