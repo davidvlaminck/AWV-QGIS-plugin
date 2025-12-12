@@ -13,6 +13,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref_name }}
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -31,8 +32,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
-            # Ensure we push to the same branch we checked out
-            branch="$(git rev-parse --abbrev-ref HEAD)"
             git commit -m "Automated build: update plugins"
-            git push origin "$branch"
+            git push
           fi
