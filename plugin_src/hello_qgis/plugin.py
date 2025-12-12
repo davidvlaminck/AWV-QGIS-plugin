@@ -3,21 +3,24 @@
 # Refactored for clarity: smaller helper methods, preserved behavior.
 
 # -*- coding: utf-8 -*-
+import sys
+import importlib
 import datetime
 import subprocess
+import tempfile
 from pathlib import Path
 import json
 from typing import Optional
-
-from qgis.PyQt.QtCore import QObject, QVariant
+import traceback
+from qgis.PyQt.QtCore import QObject, QVariant, QDateTime, Qt, QTime, QDate
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QInputDialog
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QInputDialog, QMessageBox
 from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsFields, QgsField,
-    QgsFeature, QgsGeometry, QgsWkbTypes, QgsCoordinateReferenceSystem,
+    QgsProject, QgsVectorLayer, QgsFields, QgsField, Qgis, QgsVectorFileWriter,
+    QgsFeature, QgsGeometry, QgsWkbTypes, QgsCoordinateReferenceSystem, QgsPoint,
     QgsCoordinateTransform, QgsFeatureRequest, QgsEditorWidgetSetup
 )
-from qgis.core import Qgis
+
 
 from .venv_maintainer import maintain_venv_and_packages
 
@@ -95,10 +98,9 @@ class HelloQGISPlugin(QObject):
             print("[hello_qgis] export diag:", line)
 
         output_path = self._prompt_export_path()
-        if not output_path:
+        if not output_path or str(output_path) == ".":
             return
 
-        from qgis.core import QgsProject
         target_crs = QgsProject.instance().crs() if QgsProject.instance().crs().isValid() else None
 
         all_features = []
@@ -137,9 +139,7 @@ class HelloQGISPlugin(QObject):
             OtlmowConverter.from_file_to_objects(file_path=output_path)
             self.iface.messageBar().pushMessage("Export", f"Exported and validated: {output_path}", level=Qgis.Info, duration=5)
         except Exception as e:
-            import traceback
             tb = traceback.format_exc()
-            from qgis.PyQt.QtWidgets import QMessageBox
             QMessageBox.critical(self.iface.mainWindow(), "Export validation failed", f"Validation failed:\n{tb}")
             print(tb)
 
@@ -150,8 +150,6 @@ class HelloQGISPlugin(QObject):
         Geometries are reprojected to `target_crs` if provided; features without geometry get None.
         Property values are normalized to JSON-serializable types.
         """
-        from qgis.core import QgsCoordinateTransform, QgsGeometry, QgsProject, QgsWkbTypes
-
         transform = None
         layer_crs_obj = None
         try:
@@ -182,13 +180,16 @@ class HelloQGISPlugin(QObject):
                         raw_val = None
                 props[name] = self._serialize_value(raw_val)
 
-            geom = None
             try:
                 geom_obj = feat.geometry()
             except Exception:
                 geom_obj = None
 
-            # For NoGeometry layers or features with empty geometry, keep geometry as None
+            # For NoGeometry layers or features with empty geometry, omit the geometry key entirely
+            feature_dict = {
+                "type": "Feature",
+                "properties": props
+            }
             if geom_obj and not geom_obj.isEmpty():
                 g = QgsGeometry(geom_obj)
                 if transform:
@@ -200,12 +201,10 @@ class HelloQGISPlugin(QObject):
                     geom = json.loads(g.asJson())
                 except Exception:
                     geom = None
+                feature_dict["geometry"] = geom
+            # else: do not include "geometry" key at all
 
-            features.append({
-                "type": "Feature",
-                "properties": props,
-                "geometry": geom
-            })
+            features.append(feature_dict)
 
         return features, layer_crs_obj
 
@@ -213,8 +212,6 @@ class HelloQGISPlugin(QObject):
         """
         Convert Qt / QGIS / common Python types to JSON-serializable values.
         """
-        from qgis.PyQt.QtCore import QDateTime, QDate, QTime, QVariant, Qt
-        import datetime
         if val is None:
             return None
 
@@ -301,7 +298,6 @@ class HelloQGISPlugin(QObject):
         return geomtype_to_layers
 
     def _export_layer_to_file(self, layer, dest_path) -> bool:
-        from qgis.core import QgsVectorFileWriter, QgsProject
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = "GeoJSON"
         options.fileEncoding = "UTF-8"
@@ -479,9 +475,6 @@ class HelloQGISPlugin(QObject):
             self.iface.messageBar().pushWarning("Dependency", "Venv update failed.")
             return
 
-        import sys
-        import importlib
-
         def venv_site_packages(venv_path: Path) -> Optional[str]:
             pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
             candidates = [
@@ -562,7 +555,6 @@ class HelloQGISPlugin(QObject):
     # File / parsing helpers
     # -------------------------
     def _write_temp_geojson(self, geojson_text: str) -> str:
-        import tempfile
         with tempfile.NamedTemporaryFile(suffix=".geojson", delete=False, mode="w", encoding="utf-8") as tmpfile:
             tmpfile.write(geojson_text)
             return tmpfile.name
@@ -643,7 +635,6 @@ class HelloQGISPlugin(QObject):
         If the target layer is geometryless (geom_type is None) do *not* set geometries,
         so attribute-only features are preserved.
         """
-        from qgis.core import QgsFeature, QgsGeometry
         no_geom_count = 0
 
         for feat_json in feats:
@@ -679,7 +670,6 @@ class HelloQGISPlugin(QObject):
         print(f"[hello_qgis] import diag: {mem_layer.name()}: total={len(feats)}, no_geom={no_geom_count}")
 
     def _geom_from_point(self, coords: list) -> QgsGeometry:
-        from qgis.core import QgsPoint, QgsGeometry
         geom = QgsGeometry()
         if coords:
             if len(coords) == 3:
@@ -689,7 +679,6 @@ class HelloQGISPlugin(QObject):
         return geom
 
     def _geom_from_polygon(self, geom_data: dict, coords: list) -> QgsGeometry:
-        from qgis.core import QgsPoint, QgsGeometry
         # Always 3D
         if coords and isinstance(coords[0][0], (float, int)):
             # Single ring, 2D
@@ -722,7 +711,6 @@ class HelloQGISPlugin(QObject):
         return geom
 
     def _geom_from_linestring(self, geom_data: dict, coords: list) -> QgsGeometry:
-        from qgis.core import QgsPoint, QgsGeometry
         if coords and isinstance(coords[0], list):
             if len(coords[0]) == 3:
                 line = [QgsPoint(x, y, z) for x, y, z in coords]
@@ -740,7 +728,6 @@ class HelloQGISPlugin(QObject):
         return geom
 
     def _geom_from_json(self, geom_data: dict) -> QgsGeometry:
-        from qgis.core import QgsGeometry
         geom_json = json.dumps(geom_data).encode('utf-8')
         try:
             geom = QgsGeometry.fromJson(geom_json)
