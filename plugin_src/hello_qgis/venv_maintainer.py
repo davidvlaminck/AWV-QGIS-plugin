@@ -39,6 +39,7 @@ def venv_python_executable(venv_dir: Path) -> Path:
         return venv_dir / "bin" / "python"
 
 
+# unused currently
 def venv_site_packages(venv_path: str | Path) -> str | None:
     venv_path = Path(venv_path)
     pyver = f"python{sys.version_info.major}.{sys.version_info.minor}"
@@ -203,8 +204,11 @@ class VenvMaintainer(QObject):
             cmds.append([python_exe, "-m", "venv", str(self.venv_dir)])
         venv_py = venv_python_executable(self.venv_dir)
         cmds.append([str(venv_py), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"])
-        cmds.append([str(venv_py), "-m", "pip", "install", "uv"])
-        cmds.extend([str(venv_py), "-m", "uv", "pip", "install", "--upgrade", pkg] for pkg in self.packages)
+        if sys.platform == "win32":
+            cmds.extend([str(venv_py), "-m", "pip", "install", "--upgrade", pkg] for pkg in self.packages)
+        else:
+            cmds.append([str(venv_py), "-m", "pip", "install", "uv"])
+            cmds.extend([str(venv_py), "-m", "uv", "pip", "install", "--upgrade", pkg] for pkg in self.packages)
         return cmds
 
     def run_next_command(self):
